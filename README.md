@@ -19,7 +19,7 @@ export DYLD_LIBRARY_PATH=/opt/homebrew/opt/ffmpeg@7/lib:$DYLD_LIBRARY_PATH
 ### Step 1: Prepare HDF5 Trajectory Data
 
 ```bash
-wanvideo/convert-to-hdf5.py
+modal run --detach convert-to-hdf5.py --hf_dataset="aphamm/real-teleop-v0"
 ```
 
 You need to organize the HDF5 files containing the robot trajectory data as follows:
@@ -59,6 +59,7 @@ The weights of the VLA policy used in our paper: [ACT](https://huggingface.co/ap
 
 ```bash
 modal volume create my-volume
+modal volume put my-volume data
 
 wanvideo/scripts/extract_latents.sh
 ```
