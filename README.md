@@ -1,6 +1,6 @@
 # WorldEval w/ ACT LeRobot Dataset
 
-### Dependencies
+### Packages
 
 ```bash
 # install packages
@@ -19,13 +19,13 @@ export DYLD_LIBRARY_PATH=/opt/homebrew/opt/ffmpeg@7/lib:$DYLD_LIBRARY_PATH
 ### Step 1: Prepare HDF5 Trajectory Data
 
 ```bash
-wanvideo/convert-to-h5.py
+wanvideo/convert-to-hdf5.py
 ```
 
 You need to organize the HDF5 files containing the robot trajectory data as follows:
 
 ```bash
-data/act_dataset/
+act_dataset/
 ├── episodes/
   ├── episode_0001.h5
   ├── episode_0002.h5
@@ -58,13 +58,15 @@ Wan-Video is a collection of video synthesis models open-sourced by Alibaba. Dow
 The weights of the VLA policy used in our paper: [ACT](https://huggingface.co/aphamm/act) with `dim_model = 384`.
 
 ```bash
+modal volume create my-volume
+
 wanvideo/scripts/extract_latents.sh
 ```
 
 After, cached files will be stored in the dataset folder.
 
 ```bash
-data/act_dataset/
+act_dataset/
 ├── episodes/
 ├── train
     ├── file1.hdf5.tensors.pth
