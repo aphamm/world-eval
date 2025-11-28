@@ -303,9 +303,9 @@ class LightningModelForDataProcess(pl.LightningModule):
         tiled=False,
         tile_size=(34, 34),
         tile_stride=(18, 16),
-        encode_mode="dexvla",
+        encode_mode="act",
         action_alpha=0.1,
-        action_dim=1280,
+        action_dim=384,
     ):
         super().__init__()
         model_path = [text_encoder_path, vae_path]
@@ -397,9 +397,9 @@ class LightningModelForTrain(pl.LightningModule):
         use_gradient_checkpointing=True,
         use_gradient_checkpointing_offload=False,
         pretrained_lora_path=None,
-        encode_mode="dexvla",
+        encode_mode="act",
         action_alpha=0.1,
-        action_dim=1280,
+        action_dim=384,
     ):
         super().__init__()
         model_manager = ModelManager(
@@ -801,8 +801,8 @@ def parse_args():
     parser.add_argument(
         "--encode_mode",
         type=str,
-        default="dexvla",
-        choices=["dexvla", "pi0", "dp", "openvla"],
+        default="act",
+        choices=["act"],
         help="The mode of the action data.",
     )
     parser.add_argument(
@@ -814,7 +814,7 @@ def parse_args():
     parser.add_argument(
         "--action_dim",
         type=int,
-        default=1280,
+        default=384,
         help="The dimension of the action data.",
     )
     parser.add_argument(

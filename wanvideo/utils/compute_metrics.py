@@ -41,7 +41,7 @@ def main():
 
     # Define paths and subdirectories
     metadata_path = ""
-    subdirectory = "lora_act_alpha_0.3_dex_ep30"
+    subdirectory = "lora_act_alpha_0.3_act_ep30"
 
     # Load metadata
     with open(metadata_path, "r") as f:

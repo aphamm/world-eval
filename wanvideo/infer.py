@@ -169,7 +169,7 @@ if __name__ == "__main__":
     parser.add_argument("--action", action="store_true")
     parser.add_argument("--action_encoded_path", type=str, default=None)
     parser.add_argument("--action_alpha", type=float, default=0.1)
-    parser.add_argument("--action_dim", type=int, default=1280)
+    parser.add_argument("--action_dim", type=int, default=384)
     parser.add_argument(
         "--action_length", type=int, default=81, help="Length of the action sequence"
     )
