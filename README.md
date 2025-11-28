@@ -1,23 +1,22 @@
-
 <h1 align="center">
 WorldEval: World Model as Real-World Robot Policies Evaluator</h1>
 
-
-
-* **World Model as Real-World Robot Policies Evaluator** <br>
+- **World Model as Real-World Robot Policies Evaluator** <br>
   [![arXiv](https://img.shields.io/badge/Arxiv-2402.03766-b31b1b.svg?logo=arXiv)](https://www.arxiv.org/abs/2505.19017)
-  
+
 <p align="center">
   <img src="assets/overview.png" width="500"/> &nbsp;
 </p>
 
 ## 📰 News
-* **`May. 19th, 2025`**: Our code is released!
-* **`May. 19th, 2025`**: **Worldeval** is out! **Paper** can be found [here](https://www.arxiv.org/pdf/2505.19017). The **project web** can be found [here](https://worldeval.github.io/).
 
+- **`May. 19th, 2025`**: Our code is released!
+- **`May. 19th, 2025`**: **Worldeval** is out! **Paper** can be found [here](https://www.arxiv.org/pdf/2505.19017). The **project web** can be found [here](https://worldeval.github.io/).
 
 ## Data Preparation
+
 Our robot trajectory data format is the same as [act](https://github.com/MarkFzp/act-plus-plus), so you need to transfer your data into h5py format.
+
 ```angular2html
 # h5 data structure
 root
@@ -33,23 +32,24 @@ root
       |-qpos (100,14)
       |-qvel (100,14)
 ```
-## Download Pretrained VLA Policy
-The weights of vla policy used in our paper are listed as following: 
 
-| Model               | Link                                                           |
-|---------------------|----------------------------------------------------------------|
-| Pi0 | [huggingface](https://huggingface.co/kuromivv/pi0) |
-| DexVLA | [huggingface](https://huggingface.co/kuromivv/DexVLA) |
+## Download Pretrained VLA Policy
+
+The weights of vla policy used in our paper are listed as following:
+
+| Model            | Link                                                            |
+| ---------------- | --------------------------------------------------------------- |
+| Pi0              | [huggingface](https://huggingface.co/kuromivv/pi0)              |
+| DexVLA           | [huggingface](https://huggingface.co/kuromivv/DexVLA)           |
 | Diffusion Policy | [huggingface](https://huggingface.co/kuromivv/diffusion_policy) |
 
-
 ## Download WAN2.1 Weights
-Wan-Video is a collection of video synthesis models open-sourced by Alibaba.
-|Developer|Name|Link|Scripts|
-|-|-|-|-|
-|Wan Team|14B image-to-video 480P|[Link](https://modelscope.cn/models/Wan-AI/Wan2.1-I2V-14B-480P)|[wan_14b_image_to_video.py](./wan_14b_image_to_video.py)|
-|Wan Team|14B image-to-video 720P|[Link](https://modelscope.cn/models/Wan-AI/Wan2.1-I2V-14B-720P)|[wan_14b_image_to_video.py](./wan_14b_image_to_video.py)|
 
+Wan-Video is a collection of video synthesis models open-sourced by Alibaba.
+
+| Developer | Name                    | Link                                                            | Scripts                                                  |
+| --------- | ----------------------- | --------------------------------------------------------------- | -------------------------------------------------------- |
+| Wan Team  | 14B image-to-video 480P | [Link](https://modelscope.cn/models/Wan-AI/Wan2.1-I2V-14B-480P) | [wan_14b_image_to_video.py](./wan_14b_image_to_video.py) |
 
 ## Install
 
@@ -63,10 +63,10 @@ pip install -e .
 
 Wan-Video supports multiple Attention implementations. If you have installed any of the following Attention implementations, they will be enabled based on priority.
 
-* [Flash Attention 3](https://github.com/Dao-AILab/flash-attention)
-* [Flash Attention 2](https://github.com/Dao-AILab/flash-attention)
-* [Sage Attention](https://github.com/thu-ml/SageAttention)
-* [torch SDPA](https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html) (default. `torch>=2.5.0` is recommended.)
+- [Flash Attention 3](https://github.com/Dao-AILab/flash-attention)
+- [Flash Attention 2](https://github.com/Dao-AILab/flash-attention)
+- [Sage Attention](https://github.com/thu-ml/SageAttention)
+- [torch SDPA](https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html) (default. `torch>=2.5.0` is recommended.)
 
 ## Train
 
@@ -107,8 +107,9 @@ CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" python train_wan_t2v_act_embed.py \
   --tiled \
   --num_frames 81 \
   --height 480 \
-  --width 832 \
+  --width 480 \
   --encode_mode dexvla \
+  --samples_per_file 5 \
   --action_encoded_path data/dex2_example_dataset/train/all_actions_dex.pt
 ```
 
@@ -124,27 +125,28 @@ data/example_dataset/
 
 ### Step 3: Run lora training script
 
-Run  `scripts/train.bash`: 
+Run `scripts/train.bash`:
 
- ```shell
+```shell
 CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" \
 python train_wan_t2v.py \
-  --task train \
-  --train_architecture lora \
-  --dataset_path data/example_dataset \
-  --output_path ./models \
-  --dit_path "Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00001-of-00007.safetensors,Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00002-of-00007.safetensors,Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00003-of-00007.safetensors,Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00004-of-00007.safetensors,Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00005-of-00007.safetensors,Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00006-of-00007.safetensors,Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00007-of-00007.safetensors" \
-  --image_encoder_path "Wan2.1-I2V-14B-480P/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth" \
-  --steps_per_epoch 500 \
-  --max_epochs 40 \
-  --learning_rate 1e-4 \
-  --lora_rank 16 \
-  --lora_alpha 16 \
-  --lora_target_modules "q,k,v,o,ffn.0,ffn.2,action_alpha,action_proj.0,action_proj.2"\
-  --accumulate_grad_batches 1 \
-  --use_gradient_checkpointing
+ --task train \
+ --train_architecture lora \
+ --dataset_path data/example_dataset \
+ --output_path ./models \
+ --dit_path "Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00001-of-00007.safetensors,Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00002-of-00007.safetensors,Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00003-of-00007.safetensors,Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00004-of-00007.safetensors,Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00005-of-00007.safetensors,Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00006-of-00007.safetensors,Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00007-of-00007.safetensors" \
+ --image_encoder_path "Wan2.1-I2V-14B-480P/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth" \
+ --steps_per_epoch 500 \
+ --max_epochs 40 \
+ --learning_rate 1e-4 \
+ --lora_rank 16 \
+ --lora_alpha 16 \
+ --lora_target_modules "q,k,v,o,ffn.0,ffn.2,action_alpha,action_proj.0,action_proj.2"\
+ --accumulate_grad_batches 1 \
+ --use_gradient_checkpointing
 
-```   
+```
+
 please separate the safetensor files with a comma. For example: `models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00001-of-00006.safetensors,models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00002-of-00006.safetensors,models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00003-of-00006.safetensors,models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00004-of-00006.safetensors,models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00005-of-00006.safetensors,models/Wan-AI/Wan2.1-T2V-14B/diffusion_pytorch_model-00006-of-00006.safetensors`.
 
 ## Inference
@@ -159,7 +161,9 @@ Extract action embeddings using different VLA policies, prepare the encoded acti
   "encoded_action": [latent_action_vector1, latent_action_vector2]
 }
 ```
+
 Repositories for some VLA policies can be found below:
+
 - [DexVLA](https://github.com/juruobenruo/DexVLA)
 - [Pi0](https://github.com/huggingface/lerobot)
 
@@ -187,30 +191,33 @@ CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" python infer.py \
 ```
 
 ## Acknowledgement
+
 We build our project based on:
+
 - [WAN2.1](https://github.com/Wan-Video/Wan2.1): a comprehensive and open suite of video foundation models that pushes the boundaries of video generation.
 - [DiffSynth Studio](https://github.com/modelscope/DiffSynth-Studio): an open-source project aimed at exploring innovations in AIGC technology, licensed under the Apache License 2.0.
-Significant modifications have been made by worldeval, including:
+  Significant modifications have been made by worldeval, including:
   - Process robot data
   - Train with latent action
   - Inference with latent action
 
 This project contains code licensed under:
+
 - Apache License 2.0 (from the original project)
 - MIT License (for modifications made by Yaxuan Li)
-
 
 ## Citation
 
 If you find Worldeval useful for your research and applications, please cite using this BibTeX:
+
 ```bibtex
 @misc{li2025worldevalworldmodelrealworld,
-      title={WorldEval: World Model as Real-World Robot Policies Evaluator}, 
+      title={WorldEval: World Model as Real-World Robot Policies Evaluator},
       author={Yaxuan Li and Yichen Zhu and Junjie Wen and Chaomin Shen and Yi Xu},
       year={2025},
       eprint={2505.19017},
       archivePrefix={arXiv},
       primaryClass={cs.RO},
-      url={https://arxiv.org/abs/2505.19017}, 
+      url={https://arxiv.org/abs/2505.19017},
 }
 ```

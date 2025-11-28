@@ -1,28 +1,34 @@
-import os
-import json
 import argparse
+import json
 import multiprocessing
+import os
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-import torch
-from diffsynth import ModelManager, WanVideoPipeline, WanVideoPipelineActEmbed, save_video, VideoData
-from PIL import Image
 import h5py
 import numpy as np
+import torch
+from PIL import Image
+
+from diffsynth import (
+    ModelManager,
+    WanVideoPipeline,
+    WanVideoPipelineActEmbed,
+    save_video,
+)
 
 
 def load_act_embed(file_path, start_index, end_index, action_encoded_path=None):
     if action_encoded_path is not None:
         data = torch.load(action_encoded_path, weights_only=False)
-        file_index = data['file_path'].index(file_path)
-        action_data = data['encoded_action'][file_index]
-        action_data = action_data[start_index: end_index + 1]
+        file_index = data["file_path"].index(file_path)
+        action_data = data["encoded_action"][file_index]
+        action_data = action_data[start_index : end_index + 1]
         if not isinstance(action_data, np.ndarray):
             action_data = action_data.numpy()
         action_data = action_data.reshape(action_data.shape[0], -1)
     else:
-        with h5py.File(file_path, 'r') as f:
-            action_data = f['action_embed'][start_index: end_index + 1]
+        with h5py.File(file_path, "r") as f:
+            action_data = f["action_embed"][start_index : end_index + 1]
             if action_data.ndim == 3 and action_data.shape[1] == 1:
                 action_data = action_data.squeeze(1)
 
@@ -34,15 +40,26 @@ def load_act_embed(file_path, start_index, end_index, action_encoded_path=None):
     return action_data
 
 
-def process_chunk(meta_chunk, lora_path, output_subdir, action, action_encoded_path, action_alpha, action_dim,
-                  device_id, action_length):
+def process_chunk(
+    meta_chunk,
+    lora_path,
+    output_subdir,
+    action,
+    action_encoded_path,
+    action_alpha,
+    action_dim,
+    device_id,
+    action_length,
+):
     # 设置当前GPU设备
     torch.cuda.set_device(device_id)
 
     # 初始化模型管理器
     model_manager = ModelManager(
         device="cuda",
-        custom_params={"action_alpha": action_alpha, "action_dim": action_dim} if action else None
+        custom_params={"action_alpha": action_alpha, "action_dim": action_dim}
+        if action
+        else None,
     )
 
     # 加载基础模型
@@ -77,33 +94,32 @@ def process_chunk(meta_chunk, lora_path, output_subdir, action, action_encoded_p
     # 初始化管道
     if action:
         pipe = WanVideoPipelineActEmbed.from_model_manager(
-            model_manager,
-            torch_dtype=torch.bfloat16,
-            device="cuda"
+            model_manager, torch_dtype=torch.bfloat16, device="cuda"
         )
     else:
         pipe = WanVideoPipeline.from_model_manager(
-            model_manager,
-            torch_dtype=torch.bfloat16,
-            device="cuda"
+            model_manager, torch_dtype=torch.bfloat16, device="cuda"
         )
 
-    pipe.enable_vram_management(num_persistent_param_in_dit=6 * 10 ** 9)
+    pipe.enable_vram_management(num_persistent_param_in_dit=6 * 10**9)
 
     # 处理当前chunk中的每个条目
     for entry in meta_chunk:
         try:
-            start_frame_path = entry['image_path']
-            prompt = entry['language']
+            start_frame_path = entry["image_path"]
+            prompt = entry["language"]
 
             image = Image.open(start_frame_path)
 
             action_data = None
             if action:
-                file_path = entry['file_path']
-                start_index = entry.get('start_index', 0)
+                file_path = entry["file_path"]
+                start_index = entry.get("start_index", 0)
                 action_data = load_act_embed(
-                    file_path, start_index, start_index + action_length - 1, action_encoded_path
+                    file_path,
+                    start_index,
+                    start_index + action_length - 1,
+                    action_encoded_path,
                 ).to("cuda")
 
             # 视频生成
@@ -113,23 +129,28 @@ def process_chunk(meta_chunk, lora_path, output_subdir, action, action_encoded_p
                     negative_prompt="Vivid tones, overexposed, static, unclear details...",
                     input_image=image,
                     num_inference_steps=50,
-                    seed=0, tiled=True,
-                    action=action_data
+                    seed=0,
+                    tiled=True,
+                    action=action_data,
                 )
             else:
                 video = pipe(
                     prompt=prompt,
                     negative_prompt="Vivid tones, overexposed, static, unclear details...",
                     input_image=image,
-                    num_inference_steps=50, seed=0, tiled=True
+                    num_inference_steps=50,
+                    seed=0,
+                    tiled=True,
                 )
 
             # 保存结果
-            output_dir = os.path.join(os.path.dirname(entry['image_path']), output_subdir)
+            output_dir = os.path.join(
+                os.path.dirname(entry["image_path"]), output_subdir
+            )
             os.makedirs(output_dir, exist_ok=True)
             output_path = os.path.join(
                 output_dir,
-                f"{os.path.basename(start_frame_path).split('.')[0]}_video.mp4"
+                f"{os.path.basename(start_frame_path).split('.')[0]}_video.mp4",
             )
             save_video(video, output_path, fps=15, quality=5)
 
@@ -142,18 +163,20 @@ def process_chunk(meta_chunk, lora_path, output_subdir, action, action_encoded_p
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--meta_path', type=str, required=True)
-    parser.add_argument('--lora_path', type=str, default=None)
-    parser.add_argument('--output_subdir', type=str, default=None)
-    parser.add_argument('--action', action='store_true')
-    parser.add_argument('--action_encoded_path', type=str, default=None)
-    parser.add_argument('--action_alpha', type=float, default=0.1)
-    parser.add_argument('--action_dim', type=int, default=1280)
-    parser.add_argument('--action_length', type=int, default=81, help='Length of the action sequence')
+    parser.add_argument("--meta_path", type=str, required=True)
+    parser.add_argument("--lora_path", type=str, default=None)
+    parser.add_argument("--output_subdir", type=str, default=None)
+    parser.add_argument("--action", action="store_true")
+    parser.add_argument("--action_encoded_path", type=str, default=None)
+    parser.add_argument("--action_alpha", type=float, default=0.1)
+    parser.add_argument("--action_dim", type=int, default=1280)
+    parser.add_argument(
+        "--action_length", type=int, default=81, help="Length of the action sequence"
+    )
     args = parser.parse_args()
 
     # 读取元数据
-    with open(args.meta_path, 'r') as f:
+    with open(args.meta_path, "r") as f:
         meta_data = json.load(f)
 
     # 获取可用GPU数量
@@ -182,8 +205,8 @@ if __name__ == "__main__":
                 args.action_alpha,
                 args.action_dim,
                 gpu_id,  # 当前进程使用的GPU ID
-                args.action_length
-            )
+                args.action_length,
+            ),
         )
         processes.append(p)
         p.start()
