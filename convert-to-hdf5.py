@@ -114,7 +114,8 @@ def write_metadata(dataset_dir: pathlib.Path, episodes):
         f.write("file_path,file_name,text\n")
         for ep_idx in sorted(episodes.keys()):
             file_name = f"episode_{ep_idx:04d}.h5"
-            file_path = dataset_dir / "episodes" / file_name
+            # Change data directory for Modal DFS mount
+            file_path = pathlib.Path("/mnt/data/act_dataset") / "episodes" / file_name
             f.write(f'{file_path},{file_name},""\n')
 
 

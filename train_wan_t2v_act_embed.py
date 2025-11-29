@@ -19,9 +19,11 @@ from torchvision.transforms import v2
 
 from diffsynth import ModelManager, WanVideoPipelineActEmbed, load_state_dict
 
+torch.set_float32_matmul_precision("medium")
 
-# Reads HDF5 trajectories and converts them to WAN2.1 latents
-# plus text/image embeddings via `LightningModelForDataProcess`
+
+# Reads HDF5 trajectories, generate random samples per file
+# to yield training examples (paired text/action context)
 class TextVideoDataset(torch.utils.data.Dataset):
     def __init__(
         self,
@@ -37,7 +39,7 @@ class TextVideoDataset(torch.utils.data.Dataset):
         action_encoded_path=None,
     ):
         metadata = pd.read_csv(metadata_path)
-        # Check if 'file_path' exists in metadata
+        # Map metadata rows to real files; explicit paths override convention.
         if "file_path" in metadata.columns:
             self.path = metadata["file_path"].to_list()
             print(len(self.path))
@@ -63,7 +65,7 @@ class TextVideoDataset(torch.utils.data.Dataset):
             [
                 v2.CenterCrop(size=(height, width)),
                 v2.Resize(size=(height, width), antialias=True),
-                v2.ToTensor(),
+                v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)]),
                 v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
             ]
         )
@@ -119,6 +121,7 @@ class TextVideoDataset(torch.utils.data.Dataset):
         start_frame_id = torch.randint(
             0, self.max_num_frames - (self.num_frames - 1) * self.frame_interval, (1,)
         )[0]
+        # Sample a random contiguous clip to increase temporal diversity.
         frames = self.load_frames_using_imageio(
             file_path,
             self.max_num_frames,
@@ -129,10 +132,14 @@ class TextVideoDataset(torch.utils.data.Dataset):
         )
         return frames
 
+    """
+    Keep video & action latents syncrhonized.
+    """
+
     def load_hdf5(self, file_path):
         with h5py.File(file_path, "r") as f:
-            # Read the data from the specified field
-            data = f["observations/images/cam_high"]
+            # WAN trajectories store camera feed under this dataset key.
+            data = f["observations/images/cam_top"]
             is_compressed = f.attrs.get("compress", False)
             total_frames = data.shape[0]  # Get the number of frames
 
@@ -161,6 +168,7 @@ class TextVideoDataset(torch.utils.data.Dataset):
 
     def load_act_embed(self, file_path, start_index, end_index):
         if self.action_encoded_path is not None:
+            # Pre-encoded actions live in a separate torch dump; pull by filename.
             data = torch.load(self.action_encoded_path, weights_only=False)
             file_index = data["file_path"].index(file_path)
             action_data = data["encoded_action"][file_index]
@@ -179,7 +187,7 @@ class TextVideoDataset(torch.utils.data.Dataset):
 
     def load_text_from_hdf5(self, file_path, start_frame_id, end_frame_id):
         with h5py.File(file_path, "r") as f:
-            # Check if 'substep_reasonings' exists and is not empty
+            # Prefer per-step reasoning strings when they exist; otherwise fallback to global narration.
             if (
                 "substep_reasonings" in f
                 and f["substep_reasonings"].shape[0] > end_frame_id
@@ -223,6 +231,7 @@ class TextVideoDataset(torch.utils.data.Dataset):
         frames = [self.crop_and_resize(frame) for frame in frames]
 
         # Capture the first frame after crop and resize
+        # First frame is later used for image encoder alignment in I2V mode.
         first_frame = np.array(frames[0])
 
         frames = [self.frame_process(frame) for frame in frames]
@@ -253,6 +262,7 @@ class TextVideoDataset(torch.utils.data.Dataset):
         return frame
 
     def __getitem__(self, data_id):
+        # Deterministically reuse the same file multiple times by virtualizing indices.
         actual_data_id = data_id // self.samples_per_file
         text = self.text[actual_data_id]
         path = self.path[actual_data_id]
@@ -311,6 +321,7 @@ class LightningModelForDataProcess(pl.LightningModule):
         model_path = [text_encoder_path, vae_path]
         if image_encoder_path is not None:
             model_path.append(image_encoder_path)
+        # ModelManager wires together the WAN text/video encoders for inference-only export.
         model_manager = ModelManager(
             torch_dtype=torch.bfloat16,
             device="cpu",
@@ -349,6 +360,7 @@ class LightningModelForDataProcess(pl.LightningModule):
                 )
             else:
                 image_emb = {}
+            # Persist everything required for later fine-tuning in a single torch file.
             data = {
                 "latents": latents,
                 "prompt_emb": prompt_emb,
@@ -402,6 +414,7 @@ class LightningModelForTrain(pl.LightningModule):
         action_dim=384,
     ):
         super().__init__()
+        # Load only the DiT denoiser; other components were exported during data_process.
         model_manager = ModelManager(
             torch_dtype=torch.bfloat16,
             device="cpu",
@@ -447,7 +460,7 @@ class LightningModelForTrain(pl.LightningModule):
         self.use_gradient_checkpointing_offload = use_gradient_checkpointing_offload
 
     def freeze_parameters(self):
-        # Freeze parameters
+        # Keep all auxiliary modules frozen; only the denoiser (plus LoRA heads) trains.
         self.pipe.requires_grad_(False)
         self.pipe.eval()
         self.pipe.denoising_model().train()
@@ -477,6 +490,7 @@ class LightningModelForTrain(pl.LightningModule):
 
         for name, param in model.named_parameters():
             if "action_proj" in name and ("weight" in name or "bias" in name):
+                # Always fine-tune action adapters even if they fall outside LoRA targets.
                 param.requires_grad = True
 
         for param in model.parameters():
@@ -509,8 +523,7 @@ class LightningModelForTrain(pl.LightningModule):
             )
 
     def training_step(self, batch, batch_idx):
-        # Add this line to print the keys in the batch
-
+        # Latent/conditioning tensors come from the preprocessing step.
         # Data
         latents = batch["latents"].to(self.device)
         prompt_emb = batch["prompt_emb"]
@@ -526,6 +539,7 @@ class LightningModelForTrain(pl.LightningModule):
 
         # Loss
         self.pipe.device = self.device
+        # Standard diffusion objective: predict noise for a random timestep.
         noise = torch.randn_like(latents)
         timestep_id = torch.randint(0, self.pipe.scheduler.num_train_timesteps, (1,))
         timestep = self.pipe.scheduler.timesteps[timestep_id].to(
@@ -829,6 +843,7 @@ def parse_args():
 
 
 def data_process(args):
+    # Stage 1: stream raw trajectories and export WAN latents/embeddings.
     dataset = TextVideoDataset(
         args.dataset_path,
         os.path.join(args.dataset_path, "metadata.csv"),
@@ -864,6 +879,7 @@ def data_process(args):
 
 
 def train(args):
+    # Stage 2: load cached tensors and optimize the DiT/LoRA weights.
     dataset = TensorDataset(
         args.dataset_path,
         os.path.join(args.dataset_path, "metadata.csv"),

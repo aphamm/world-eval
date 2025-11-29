@@ -19,7 +19,7 @@ export DYLD_LIBRARY_PATH=/opt/homebrew/opt/ffmpeg@7/lib:$DYLD_LIBRARY_PATH
 ### Step 1: Prepare HDF5 Trajectory Data
 
 ```bash
-modal run --detach convert-to-hdf5.py --hf_dataset="aphamm/real-teleop-v0"
+python3 convert-to-hdf5.py --hf_dataset="aphamm/real-teleop-v0"
 ```
 
 You need to organize the HDF5 files containing the robot trajectory data as follows:
@@ -51,17 +51,25 @@ episode_0001.h5
 
 Note: `F` indicates the number of frames in an episode.
 
-Wan-Video is a collection of video synthesis models open-sourced by Alibaba. Download the weights [14B image-to-video 480P model](https://modelscope.cn/models/Wan-AI/Wan2.1-I2V-14B-480P)
+Wan-Video is a collection of video synthesis models open-sourced by Alibaba. Download the weights [14B image-to-video 480P model](https://modelscope.cn/models/Wan-AI/Wan2.1-I2V-14B-480P). Download models using the huggingface CLI.
+
+```bash
+hf download Wan-AI/Wan2.1-I2V-14B-480P --local-dir ./models
+```
+
+```bash
+modal volume rm my-volume data/act_dataset/train/all_actions.pt
+modal volume put my-volume data/act_dataset/train/all_actions.pt data/act_dataset/train/all_actions.pt
+```
 
 ### Step 2: Extract Action Latents
 
 The weights of the VLA policy used in our paper: [ACT](https://huggingface.co/aphamm/act) with `dim_model = 384`.
 
 ```bash
-modal volume create my-volume
+modal volume create my-volume --version=2
 modal volume put my-volume data
-
-wanvideo/scripts/extract_latents.sh
+modal run --detach extract-latents.py
 ```
 
 After, cached files will be stored in the dataset folder.
