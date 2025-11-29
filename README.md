@@ -7,6 +7,10 @@
 uv venv .venv --python=3.10
 source .venv/bin/activate
 uv pip install -r requirements.txt
+# create a modal API token
+python3 -m modal setup
+# create modal secret
+modal secret create wandb-secret WANDB_API_KEY="<your_wandb_api_key>"
 # install ffmpeg for image/video processing
 brew install ffmpeg@7
 # when a program needs a dynamic library at runtime, dyld searches for it in DYLD_LIBRARY_PATH
@@ -20,6 +24,9 @@ export DYLD_LIBRARY_PATH=/opt/homebrew/opt/ffmpeg@7/lib:$DYLD_LIBRARY_PATH
 
 ```bash
 python3 convert-to-hdf5.py --hf_dataset="aphamm/real-teleop-v0"
+# create modal volume and upload data/ to modal DFS
+modal volume create my-volume --version=2
+modal volume put my-volume data data
 ```
 
 You need to organize the HDF5 files containing the robot trajectory data as follows:
@@ -30,7 +37,7 @@ act_dataset/
   ├── episode_0001.h5
   ├── episode_0002.h5
   └── episode_0003.h5
-├── train (empty dir to store processed tensor)
+├── train/ (empty dir to store processed tensor)
 └── metadata.csv (file_path,file_name,text)
 ```
 
@@ -51,25 +58,28 @@ episode_0001.h5
 
 Note: `F` indicates the number of frames in an episode.
 
-Wan-Video is a collection of video synthesis models open-sourced by Alibaba. Download the weights [14B image-to-video 480P model](https://modelscope.cn/models/Wan-AI/Wan2.1-I2V-14B-480P). Download models using the huggingface CLI.
-
-```bash
-hf download Wan-AI/Wan2.1-I2V-14B-480P --local-dir ./models
-```
-
-```bash
-modal volume rm my-volume data/act_dataset/train/all_actions.pt
-modal volume put my-volume data/act_dataset/train/all_actions.pt data/act_dataset/train/all_actions.pt
-```
-
 ### Step 2: Extract Action Latents
 
-The weights of the VLA policy used in our paper: [ACT](https://huggingface.co/aphamm/act) with `dim_model = 384`.
+Run the Act Policy to generate action latents for all frames in the HD5F dataset. The weights of the VLA policy used in our paper: [ACT](https://huggingface.co/aphamm/act) with `dim_model = 384`.
 
 ```bash
-modal volume create my-volume --version=2
-modal volume put my-volume data
-modal run --detach extract-latents.py
+modal run --detach extract-latent-action.py --hf-model="aphamm/act"
+```
+
+A new `pt` file should be saved as such:
+
+```bash
+act_dataset/
+├── episodes/
+├── train/
+    └── all_actions.pt
+└── metadata.csv
+```
+
+### Step 3: Prepare Training Examples
+
+```bash
+modal run --detach generate-train-data.py
 ```
 
 After, cached files will be stored in the dataset folder.
@@ -83,13 +93,19 @@ act_dataset/
 └── metadata.csv
 ```
 
-### Step 3: Finetune World Model with LoRA
+### Step 4: Download Model Weights
+
+Wan-Video is a collection of video synthesis models open-sourced by Alibaba. Download the modal weights [14B image-to-video 480P model](https://modelscope.cn/models/Wan-AI/Wan2.1-I2V-14B-480P) to Modal DFS using the huggingface CLI.
 
 ```bash
-wanvideo/scripts/lora_finetune.sh
+modal run --detach download-model.py
 ```
 
-Note: separate the safetensor files with a comma.
+### Step 5: Finetune World Model with LoRA
+
+```bash
+modal run --detach lora-finetune.py
+```
 
 ## Running World Model Inference
 
@@ -103,8 +119,6 @@ Extract 384-dimensional latent action embeddings using the ACT policy checkpoint
   "encoded_action": [latent_action_vector1, latent_action_vector2]
 }
 ```
-
-The ACT checkpoint we rely on is available on [Hugging Face](https://huggingface.co/aphamm/act); please follow its README to export latent actions compatible with this repository.
 
 ### Step 2: Sample Frames
 

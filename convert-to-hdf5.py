@@ -11,6 +11,8 @@ import numpy as np
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from tqdm import tqdm
 
+from config import data_dir, fps, mount_path
+
 
 def to_numpy(value: Any) -> np.ndarray:
     if hasattr(value, "detach") and hasattr(value, "cpu"):
@@ -108,14 +110,16 @@ def write_episode(
     print(f"Wrote {out_path}")
 
 
-def write_metadata(dataset_dir: pathlib.Path, episodes):
+def write_metadata(
+    dataset_dir: pathlib.Path, modal_dataset_dir: pathlib.Path, episodes
+):
     meta_path = dataset_dir / "metadata.csv"
     with meta_path.open("w") as f:
         f.write("file_path,file_name,text\n")
         for ep_idx in sorted(episodes.keys()):
             file_name = f"episode_{ep_idx:04d}.h5"
             # Change data directory for Modal DFS mount
-            file_path = pathlib.Path("/mnt/data/act_dataset") / "episodes" / file_name
+            file_path = modal_dataset_dir / "episodes" / file_name
             f.write(f'{file_path},{file_name},""\n')
 
 
@@ -127,31 +131,17 @@ def main():
         default="aphamm/real-teleop-v0",
         help="HuggingFace dataset name",
     )
-    parser.add_argument(
-        "--split", type=str, default="train", help="Dataset split (e.g., train, val)"
-    )
-    parser.add_argument(
-        "--data_dir",
-        type=str,
-        default="data/act_dataset",
-        help="Directory to save the converted dataset",
-    )
-    parser.add_argument(
-        "--fps", type=float, default=30.0, help="Frames per second for the video"
-    )
 
     args = parser.parse_args()
-
     hf_dataset = args.hf_dataset
-    split = args.split
-    data_dir = args.data_dir
-    fps = args.fps
 
-    data_path = pathlib.Path(data_dir).expanduser()
-    data_path = pathlib.Path(__file__).resolve().parent / data_path
-    dataset_dir = data_path
+    # local dataset directory
+    dataset_dir = pathlib.Path(__file__).resolve().parent / data_dir
+    # modal dataset directory
+    modal_dataset_dir = pathlib.Path(mount_path) / data_dir
+    # create episodes & train directories
     episodes_dir = dataset_dir / "episodes"
-    train_dir = dataset_dir / split
+    train_dir = dataset_dir / "train"
     episodes_dir.mkdir(parents=True, exist_ok=True)
     train_dir.mkdir(parents=True, exist_ok=True)
 
@@ -188,7 +178,7 @@ def main():
             fps=fps,
         )
 
-    write_metadata(dataset_dir, episodes)
+    write_metadata(dataset_dir, modal_dataset_dir, episodes)
 
 
 if __name__ == "__main__":

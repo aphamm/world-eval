@@ -2,64 +2,26 @@
 Convert a LeRobot parquet/video dataset into ACT-style HDF5 files using Modal.
 """
 
-import pathlib
-
 import modal
 
-app = modal.App("extract-latents")
-vol = modal.Volume.from_name("my-volume", create_if_missing=True, version=2)
-mount_path = pathlib.Path("/mnt")
+from config import mount_path, num_cpus, timeout, train_image, vol
 
-
-image = (
-    modal.Image.from_registry("nvidia/cuda:11.8.0-devel-ubuntu22.04", add_python="3.10")
-    .run_commands(
-        "apt-get update && apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config ffmpeg bash \
-            && python3 -m pip install --upgrade --no-cache-dir pip wheel setuptools packaging \
-            && rm -rf /var/lib/apt/lists/*"
-    )
-    .uv_pip_install(
-        "torch>=2.0.0",
-        "torchvision",
-        "cupy-cuda12x",
-        "transformers==4.46.2",
-        "controlnet-aux==0.0.7",
-        "imageio",
-        "imageio[ffmpeg]",
-        "safetensors",
-        "einops",
-        "sentencepiece",
-        "protobuf",
-        "modelscope",
-        "ftfy",
-        "peft==0.13.0",
-        "lightning",
-        "pandas",
-        "h5py",
-        "pytest",
-        "litmodels",
-        "lightning[extra]",
-    )
-    .add_local_dir("diffsynth", remote_path="/root/diffsynth", copy=True)
-    .add_local_file(
-        "train_wan_t2v_act_embed.py", remote_path="/root/train_wan_t2v_act_embed.py"
-    )
-)
+app = modal.App("lora-finetune")
 
 
 @app.function(
-    image=image,
+    image=train_image,
     volumes={mount_path: vol},
-    timeout=60 * 60 * 8,
-    cpu=4.0,
-    gpu="A100-80GB",
+    cpu=num_cpus,
+    gpu="A100-80GB:4",
+    timeout=timeout,
+    secrets=[modal.Secret.from_name("wandb-secret")],
 )
 def extract_latents():
     import subprocess
     import sys
 
-    subprocess.run(["ls", "-l"], check=True)
+    from config import mount_path
 
     subprocess.run(
         [
@@ -72,7 +34,7 @@ def extract_latents():
             "--dataset_path",
             f"{str(mount_path)}/data/act_dataset/",
             "--output_path",
-            f"{str(mount_path)}/models",
+            f"{str(mount_path)}/weights",
             "--dit_path",
             ",".join(
                 [
@@ -88,20 +50,24 @@ def extract_latents():
             "--image_encoder_path",
             f"{str(mount_path)}/models/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth",
             "--steps_per_epoch",
-            "500",
+            "60",  # if effective_batch_size = 4 with 4 GPUs, then 250 training examples / 4 ≈ 62 steps/epoch
             "--max_epochs",
             "40",
+            "--dataloader_num_workers",
+            "8",
             "--learning_rate",
-            "1e-4",
+            "1e-5",  # original 1e-4 is too high for 17× less data
+            "--training_strategy",
+            "deepspeed_stage_2",
             "--lora_rank",
             "16",
             "--lora_alpha",
             "16",
             "--lora_target_modules",
             "q,k,v,o,ffn.0,ffn.2,action_alpha,action_proj.0,action_proj.2",
-            "--accumulate_grad_batches",
+            "--accumulate_grad_batches",  # effective_batch_size = batch_size * accumulate_grad_batches * num_gpus
             "1",
-            "--use_gradient_checkpointing",
+            "--use_gradient_checkpointing",  # reduces memory by recomputing activations during backward pass
             "--action_alpha",
             "0.3",
             "--action_dim",
@@ -110,8 +76,6 @@ def extract_latents():
             "act",
             "--action_encoded_path",
             f"{str(mount_path)}/data/act_dataset/train/all_actions.pt",
-            "--version",
-            "lora_act_alpha_0.3_act",
         ],
         stdout=sys.stdout,
         stderr=sys.stderr,

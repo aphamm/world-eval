@@ -2,13 +2,11 @@
 Convert a LeRobot parquet/video dataset into ACT-style HDF5 files using Modal.
 """
 
-import pathlib
-
 import modal
 
-app = modal.App("extract-latents")
-vol = modal.Volume.from_name("my-volume", create_if_missing=True, version=2)
-mount_path = pathlib.Path("/mnt")
+from config import mount_path, num_cpus, timeout, vol
+
+app = modal.App("generate-train-data")
 
 
 image = (
@@ -38,28 +36,26 @@ image = (
         "pandas",
         "h5py",
         "pytest",
-        "litmodels",
         "lightning[extra]",
     )
     .add_local_dir("diffsynth", remote_path="/root/diffsynth", copy=True)
     .add_local_file(
         "train_wan_t2v_act_embed.py", remote_path="/root/train_wan_t2v_act_embed.py"
     )
+    .add_local_file("config.py", remote_path="/root/config.py")
 )
 
 
 @app.function(
     image=image,
     volumes={mount_path: vol},
-    timeout=60 * 60 * 8,
-    cpu=4.0,
-    gpu="A100-80GB",
+    cpu=num_cpus,
+    gpu="L40S",
+    timeout=timeout,
 )
 def extract_latents():
     import subprocess
     import sys
-
-    subprocess.run(["ls", "-l"], check=True)
 
     subprocess.run(
         [
@@ -84,14 +80,14 @@ def extract_latents():
             "480",
             "--width",
             "480",
+            "--dataloader_num_workers",
+            "8",
             "--encode_mode",
             "act",
             "--samples_per_file",
             "5",
             "--action_encoded_path",
             f"{str(mount_path)}/data/act_dataset/train/all_actions.pt",
-            "--dataloader_num_workers",
-            "8",
         ],
         stdout=sys.stdout,
         stderr=sys.stderr,

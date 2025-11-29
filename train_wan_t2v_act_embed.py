@@ -1,6 +1,5 @@
 import argparse
 import os
-import time
 
 import cv2
 import h5py
@@ -12,7 +11,7 @@ import torch
 import torch.nn as nn
 import torchvision
 from einops import rearrange
-from lightning.pytorch.loggers import TensorBoardLogger
+from lightning.pytorch.loggers import WandbLogger
 from peft import LoraConfig, inject_adapter_in_model
 from PIL import Image
 from torchvision.transforms import v2
@@ -451,7 +450,7 @@ class LightningModelForTrain(pl.LightningModule):
                 for name, param in self.pipe.denoising_model().named_parameters()
                 if param.requires_grad
             ]
-            # print("Trainable parameters:", trainable_params)
+            ("Trainable parameters:", trainable_params)
         else:
             self.pipe.denoising_model().requires_grad_(True)
 
@@ -529,7 +528,6 @@ class LightningModelForTrain(pl.LightningModule):
         prompt_emb = batch["prompt_emb"]
         prompt_emb["context"] = prompt_emb["context"][0].to(self.device)
         image_emb = batch["image_emb"]
-        # print("action_emb.shape:", action_emb.shape)
         action_emb = batch["action_emb"]
 
         if "clip_feature" in image_emb:
@@ -572,6 +570,12 @@ class LightningModelForTrain(pl.LightningModule):
             on_epoch=True,
             sync_dist=True,
         )
+
+        # Log learning rate
+        if self.optimizers() is not None:
+            lr = self.optimizers().param_groups[0]["lr"]
+            self.log("learning_rate", lr, on_step=True, sync_dist=True)
+
         return loss
 
     def configure_optimizers(self):
@@ -790,17 +794,6 @@ def parse_args():
         help="Pretrained LoRA path. Required if the training is resumed.",
     )
     parser.add_argument(
-        "--use_swanlab",
-        default=False,
-        action="store_true",
-        help="Whether to use SwanLab logger.",
-    )
-    parser.add_argument(
-        "--swanlab_mode",
-        default=None,
-        help="SwanLab mode (cloud or local).",
-    )
-    parser.add_argument(
         "--samples_per_file",
         type=int,
         default=5,
@@ -830,12 +823,6 @@ def parse_args():
         type=int,
         default=384,
         help="The dimension of the action data.",
-    )
-    parser.add_argument(
-        "--version",
-        type=str,
-        default=None,
-        help="The version of the model.",
     )
 
     args = parser.parse_args()
@@ -903,32 +890,55 @@ def train(args):
         action_alpha=args.action_alpha,
         action_dim=args.action_dim,
     )
-    if args.use_swanlab:
-        from swanlab.integration.pytorch_lightning import SwanLabLogger
+    # Always use WanDB for experiment tracking
+    wandb_config = vars(args)
+    wandb_logger = WandbLogger(
+        project="world-eval",
+        name="lora-finetune",
+        config=wandb_config,
+        save_dir=args.output_path,
+    )
+    logger = wandb_logger
 
-        swanlab_config = {"UPPERFRAMEWORK": "DiffSynth-Studio"}
-        swanlab_config.update(vars(args))
-        swanlab_logger = SwanLabLogger(
-            project="wan",
-            name="wan",
-            config=swanlab_config,
-            mode=args.swanlab_mode,
-            logdir=os.path.join(args.output_path, "swanlog"),
-        )
-        logger = [swanlab_logger]
+    # Configure distributed training for multiple GPUs
+    num_gpus = torch.cuda.device_count()
+    if num_gpus > 1:
+        # Use DDP for multi-GPU distributed training on a single machine
+        if "deepspeed" in args.training_strategy:
+            strategy = args.training_strategy
+        else:
+            # Use DDP with find_unused_parameters=False for better performance
+            strategy = "ddp_find_unused_parameters_false"
+        devices = num_gpus
+        print(f"Using distributed training with {num_gpus} GPUs, strategy: {strategy}")
     else:
-        version = args.version if args.version is not None else str(int(time.time()))
-        logger = TensorBoardLogger(save_dir=args.output_path, version=version)
+        # Single GPU or CPU
+        strategy = args.training_strategy if args.training_strategy != "auto" else None
+        devices = "auto"
+        print(f"Using single device training, devices: {devices}, strategy: {strategy}")
+
+    # Configure checkpoint saving frequency
+    checkpoint_callback = pl.pytorch.callbacks.ModelCheckpoint(
+        save_top_k=-1,  # Save all checkpoints
+        every_n_epochs=10,  # Save every 10 epochs
+        filename="{epoch:02d}_{train_loss:.4f}",
+        save_last=True,  # Always save the last checkpoint
+        dirpath=os.path.join(args.output_path, "checkpoints"),
+    )
+
     trainer = pl.Trainer(
         logger=logger,
+        log_every_n_steps=3,  # batches per GPU = 60 / 4 = 15, so log every 3 steps
         max_epochs=args.max_epochs,
         accelerator="gpu",
-        devices="auto",
-        precision="bf16",
-        strategy=args.training_strategy,
+        devices=devices,
+        precision="bf16-mixed",
+        strategy=strategy,
         default_root_dir=args.output_path,
         accumulate_grad_batches=args.accumulate_grad_batches,
-        callbacks=[pl.pytorch.callbacks.ModelCheckpoint(save_top_k=-1)],
+        callbacks=[checkpoint_callback],
+        gradient_clip_val=1.0,  # clip gradients to max norm of 1.0
+        gradient_clip_algorithm="norm",
     )
     trainer.fit(model, dataloader)
 

@@ -2,19 +2,14 @@
 Download Wan-AI/Wan2.1-I2V-14B-480P model to Modal DFS volume.
 """
 
-import pathlib
-
 import modal
 
+from config import hf_image, mount_path, num_cpus, timeout, vol
+
 app = modal.App("download-model")
-vol = modal.Volume.from_name("my-volume", create_if_missing=True, version=2)
-mount_path = pathlib.Path("/mnt")
 
 
-image = modal.Image.debian_slim(python_version="3.10").uv_pip_install("huggingface_hub")
-
-
-@app.function(image=image, volumes={mount_path: vol}, timeout=60 * 60 * 2, cpu=8.0)
+@app.function(image=hf_image, volumes={mount_path: vol}, cpu=num_cpus, timeout=timeout)
 def download_model():
     import subprocess
 
