@@ -60,7 +60,7 @@ Note: `F` indicates the number of frames in an episode.
 
 ### Step 2: Extract Action Latents
 
-Run the Act Policy to generate action latents for all frames in the HD5F dataset. The weights of the VLA policy used in our paper: [ACT](https://huggingface.co/aphamm/act) with `dim_model = 384`.
+Run the Act Policy to generate action latents for all frames in the HD5F dataset. The weights of the VLA policy used in our paper: [ACT](https://huggingface.co/aphamm/act).
 
 ```bash
 modal run --detach extract-latent-action.py --hf-model="aphamm/act"
@@ -76,6 +76,15 @@ act_dataset/
 └── metadata.csv
 ```
 
+This will extract 384-dimensional latent action embeddings and save them in a `all_actions.pt` file with the following structure:
+
+```json
+{
+  "file_path": ["path/to/file1.hdf5", "path/to/file2.hdf5"],
+  "encoded_action": [latent_action_vector1, latent_action_vector2]
+}
+```
+
 ### Step 3: Prepare Training Examples
 
 ```bash
@@ -87,7 +96,8 @@ After, cached files will be stored in the dataset folder.
 ```bash
 act_dataset/
 ├── episodes/
-├── train
+├── train/
+    └── all_actions.pt
     ├── file1.hdf5.tensors.pth
     └── file2.hdf5.tensors.pth
 └── metadata.csv
@@ -109,26 +119,47 @@ modal run --detach lora-finetune.py
 
 ## Running World Model Inference
 
-### Step 1: Extract Action Embeddings
+### Step 1: Prepare Inference Data
 
-Extract 384-dimensional latent action embeddings using the ACT policy checkpoint (`dim_model = 384`). Save them in a `.pt` file with the following structure:
-
-```json
-{
-  "file_path": ["path/to/file1.hdf5", "path/to/file2.hdf5"],
-  "encoded_action": [latent_action_vector1, latent_action_vector2]
-}
-```
-
-### Step 2: Sample Frames
-
-Use `utils/sample_frames_from_dir_for_test` to extract sample frames from the HDF5 file for testing; this will generate a `metadata.json` file and save the first frame for use in generation.
-
-### Step 3: Run Inference Script
+Prepare test data for video generation inference. Create a `metadata.json` with file paths, image paths, frame indices, and language descriptions. The first frame is saved as a PNG image saved as `{filename}_frame_0.png`.
 
 ```bash
-wanvideo/scripts/inference.sh
+modal run --detach prepare-inference.py
 ```
+
+After, the relevant files will be stored in the `dataset/inference` folder.
+
+```bash
+act_dataset/
+├── episodes/
+├── train/
+├── inference/
+    ├── metadata.json
+    ├── episode_0000_frame_0.png
+    └── episode_0001_frame_0.png
+└── metadata.csv
+```
+
+The `metadata.json` file should look as such:
+
+```bash
+[
+  {
+    "image_path": ".../episode_0000_frame_0.png",
+    "file_path": ".../episodes/episode_0000.h5",
+    "frame_index": 0,
+    "language": "Pick the small cube and put it in the box"
+  },
+]
+```
+
+### Step 2: Run Inference Script
+
+```bash
+modal run --detach run-inference.py --model-name="epoch=29_train_loss=0.0435.ckpt"
+```
+
+This will output generated videos in `act_dataset/inference/videos/episode_XXXX_frame_0.mp4`.
 
 #### Acknowledgement
 

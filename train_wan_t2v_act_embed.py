@@ -255,7 +255,6 @@ class TextVideoDataset(torch.utils.data.Dataset):
     def load_image(self, file_path):
         frame = Image.open(file_path).convert("RGB")
         frame = self.crop_and_resize(frame)
-        first_frame = frame
         frame = self.frame_process(frame)
         frame = rearrange(frame, "C H W -> C 1 H W")
         return frame
@@ -561,20 +560,17 @@ class LightningModelForTrain(pl.LightningModule):
         loss = torch.nn.functional.mse_loss(noise_pred.float(), training_target.float())
         loss = loss * self.pipe.scheduler.training_weight(timestep)
 
-        # Record log
+        # Record train loss + learning rate
         self.log(
             "train_loss",
             loss,
-            prog_bar=True,
             on_step=True,
             on_epoch=True,
             sync_dist=True,
         )
 
-        # Log learning rate
-        if self.optimizers() is not None:
-            lr = self.optimizers().param_groups[0]["lr"]
-            self.log("learning_rate", lr, on_step=True, sync_dist=True)
+        lr = self.optimizers().param_groups[0]["lr"]
+        self.log("learning_rate", lr, on_step=True, on_epoch=False, sync_dist=True)
 
         return loss
 
@@ -583,7 +579,22 @@ class LightningModelForTrain(pl.LightningModule):
             lambda p: p.requires_grad, self.pipe.denoising_model().parameters()
         )
         optimizer = torch.optim.AdamW(trainable_modules, lr=self.learning_rate)
-        return optimizer
+
+        # Cosine annealing: smooth decay over epochs
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=self.trainer.max_epochs,  # 40 epochs
+            eta_min=1e-6,  # 10% of initial LR of 1e-5
+        )
+
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "epoch",  # Update every epoch
+                "frequency": 1,
+            },
+        }
 
     def on_save_checkpoint(self, checkpoint):
         checkpoint.clear()
@@ -593,11 +604,9 @@ class LightningModelForTrain(pl.LightningModule):
                 self.pipe.denoising_model().named_parameters(),
             )
         )
-        # print("Trainable parameter names:", trainable_param_names)  # Print trainable parameter names
         trainable_param_names = set(
             [named_param[0] for named_param in trainable_param_names]
         )
-        # print("Trainable parameter names set:", trainable_param_names)  # Print trainable parameter names set
         state_dict = self.pipe.denoising_model().state_dict()
         lora_state_dict = {}
         for name, param in state_dict.items():
@@ -605,9 +614,7 @@ class LightningModelForTrain(pl.LightningModule):
                 if torch.isnan(param).any():
                     print(f"Warning: NaN values found in parameter {name}")
                 lora_state_dict[name] = param
-                print(
-                    f"Added {name} to lora_state_dict"
-                )  # Print each parameter added to lora_state_dict
+                print(f"Added {name} to lora_state_dict")
         checkpoint.update(lora_state_dict)
 
 
@@ -920,15 +927,15 @@ def train(args):
     # Configure checkpoint saving frequency
     checkpoint_callback = pl.pytorch.callbacks.ModelCheckpoint(
         save_top_k=-1,  # Save all checkpoints
-        every_n_epochs=10,  # Save every 10 epochs
-        filename="{epoch:02d}_{train_loss:.4f}",
+        every_n_epochs=5,  # Save every 5 epochs
+        filename="{epoch:02d}",
         save_last=True,  # Always save the last checkpoint
         dirpath=os.path.join(args.output_path, "checkpoints"),
     )
 
     trainer = pl.Trainer(
         logger=logger,
-        log_every_n_steps=3,  # batches per GPU = 60 / 4 = 15, so log every 3 steps
+        log_every_n_steps=1,
         max_epochs=args.max_epochs,
         accelerator="gpu",
         devices=devices,

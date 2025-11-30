@@ -50,7 +50,7 @@ def extract_latents():
             "--image_encoder_path",
             f"{str(mount_path)}/models/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth",
             "--steps_per_epoch",
-            "60",  # if effective_batch_size = 4 with 4 GPUs, then 250 training examples / 4 ≈ 62 steps/epoch
+            "60",  # with 4 GPUs and  250 training examples = 62 steps per GPU per epoch
             "--max_epochs",
             "40",
             "--dataloader_num_workers",

@@ -9,6 +9,7 @@ import numpy as np
 import torch
 from PIL import Image
 
+from config import fps, mount_path
 from diffsynth import (
     ModelManager,
     WanVideoPipeline,
@@ -32,9 +33,9 @@ def load_act_embed(file_path, start_index, end_index, action_encoded_path=None):
             if action_data.ndim == 3 and action_data.shape[1] == 1:
                 action_data = action_data.squeeze(1)
 
-    # if action_data.shape[0] < 81:
-    #     padding = ((0, 81 - action_data.shape[0]), (0, 0))
-    #     action_data = np.pad(action_data, padding, mode='constant')
+    if action_data.shape[0] < 81:
+        padding = ((0, 81 - action_data.shape[0]), (0, 0))
+        action_data = np.pad(action_data, padding, mode="constant")
 
     action_data = torch.tensor(action_data, dtype=torch.float32)
     return action_data
@@ -51,10 +52,8 @@ def process_chunk(
     device_id,
     action_length,
 ):
-    # 设置当前GPU设备
     torch.cuda.set_device(device_id)
 
-    # 初始化模型管理器
     model_manager = ModelManager(
         device="cuda",
         custom_params={"action_alpha": action_alpha, "action_dim": action_dim}
@@ -62,36 +61,32 @@ def process_chunk(
         else None,
     )
 
-    # 加载基础模型
     model_manager.load_models(
-        ["Wan2.1-I2V-14B-480P/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth"],
+        [
+            f"{str(mount_path)}/models/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth"
+        ],
         torch_dtype=torch.float32,
     )
     model_manager.load_models(
         [
             [
-                "Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00001-of-00007.safetensors",
-                "Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00002-of-00007.safetensors",
-                "Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00003-of-00007.safetensors",
-                "Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00004-of-00007.safetensors",
-                "Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00005-of-00007.safetensors",
-                "Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00006-of-00007.safetensors",
-                "Wan2.1-I2V-14B-480P/diffusion_pytorch_model-00007-of-00007.safetensors",
+                f"{str(mount_path)}/models/diffusion_pytorch_model-00001-of-00007.safetensors",
+                f"{str(mount_path)}/models/diffusion_pytorch_model-00002-of-00007.safetensors",
+                f"{str(mount_path)}/models/diffusion_pytorch_model-00003-of-00007.safetensors",
+                f"{str(mount_path)}/models/diffusion_pytorch_model-00004-of-00007.safetensors",
+                f"{str(mount_path)}/models/diffusion_pytorch_model-00005-of-00007.safetensors",
+                f"{str(mount_path)}/models/diffusion_pytorch_model-00006-of-00007.safetensors",
+                f"{str(mount_path)}/models/diffusion_pytorch_model-00007-of-00007.safetensors",
             ],
-            "Wan2.1-I2V-14B-480P/models_t5_umt5-xxl-enc-bf16.pth",
-            "Wan2.1-I2V-14B-480P/Wan2.1_VAE.pth",
+            f"{str(mount_path)}/models/models_t5_umt5-xxl-enc-bf16.pth",
+            f"{str(mount_path)}/models/Wan2.1_VAE.pth",
         ],
         torch_dtype=torch.bfloat16,
     )
 
-    # 加载LoRA
     if lora_path:
         model_manager.load_lora(lora_path, lora_alpha=1.0)
-        output_subdir = output_subdir or "lora"
-    else:
-        output_subdir = output_subdir or "original"
 
-    # 初始化管道
     if action:
         pipe = WanVideoPipelineActEmbed.from_model_manager(
             model_manager, torch_dtype=torch.bfloat16, device="cuda"
@@ -103,7 +98,6 @@ def process_chunk(
 
     pipe.enable_vram_management(num_persistent_param_in_dit=6 * 10**9)
 
-    # 处理当前chunk中的每个条目
     for entry in meta_chunk:
         try:
             start_frame_path = entry["image_path"]
@@ -122,7 +116,6 @@ def process_chunk(
                     action_encoded_path,
                 ).to("cuda")
 
-            # 视频生成
             if action:
                 video = pipe(
                     prompt=prompt,
@@ -143,18 +136,17 @@ def process_chunk(
                     tiled=True,
                 )
 
-            # 保存结果
             output_dir = os.path.join(
                 os.path.dirname(entry["image_path"]), output_subdir
             )
             os.makedirs(output_dir, exist_ok=True)
             output_path = os.path.join(
                 output_dir,
-                f"{os.path.basename(start_frame_path).split('.')[0]}_video.mp4",
+                f"{os.path.basename(start_frame_path).split('.')[0]}.mp4",
             )
-            save_video(video, output_path, fps=15, quality=5)
+            save_video(video, output_path, fps=fps, quality=5)
+            print(f"Saved video to {output_path}")
 
-            # 显存清理
             torch.cuda.empty_cache()
 
         except Exception as e:
@@ -175,19 +167,15 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # 读取元数据
     with open(args.meta_path, "r") as f:
         meta_data = json.load(f)
 
-    # 获取可用GPU数量
     num_gpus = torch.cuda.device_count()
     print(f"Available GPUs: {num_gpus}")
 
-    # 将数据分块
     chunk_size = len(meta_data) // num_gpus + 1
     chunks = [meta_data[i::num_gpus] for i in range(num_gpus)]
 
-    # 创建并启动进程
     processes = []
     for gpu_id in range(num_gpus):
         chunk = chunks[gpu_id]
@@ -204,14 +192,13 @@ if __name__ == "__main__":
                 args.action_encoded_path,
                 args.action_alpha,
                 args.action_dim,
-                gpu_id,  # 当前进程使用的GPU ID
+                gpu_id,
                 args.action_length,
             ),
         )
         processes.append(p)
         p.start()
 
-    # 等待所有进程完成
     for p in processes:
         p.join()
 
